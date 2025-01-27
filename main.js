@@ -16,8 +16,7 @@ setDragEndCallback(function (element, x, y, scale, angle) {
 });
 
 // Add event listener for spawner elements
-document.addEventListener('mousedown', handleSpawnerDrag);
-document.addEventListener('touchstart', handleSpawnerDrag);
+document.addEventListener('pointerdown', handleSpawnerDrag);
 
 function handleSpawnerDrag(event) {
   const target = event.target;
@@ -42,21 +41,15 @@ function handleSpawnerDrag(event) {
     document.getElementById('target').appendChild(clone);
     
     // Trigger drag start on clone
-    if (event.type === 'mousedown') {
-      const mouseEvent = new MouseEvent('mousedown', {
-        bubbles: true,
-        cancelable: true,
-        clientX: event.clientX,
-        clientY: event.clientY
-      });
-      clone.dispatchEvent(mouseEvent);
-    } else {
-      const touchEvent = new TouchEvent('touchstart', {
-        bubbles: true,
-        cancelable: true,
-        touches: event.touches
-      });
-      clone.dispatchEvent(touchEvent);
-    }
+    const pointerEvent = new PointerEvent('pointerdown', {
+      bubbles: true,
+      cancelable: true,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      pressure: event.pressure
+    });
+    clone.dispatchEvent(pointerEvent);
   }
 }
