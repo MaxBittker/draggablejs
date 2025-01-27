@@ -71,6 +71,10 @@ function updateHandleContainer() {
    rotate(${rotate * (180 / Math.PI)}deg)`;
 }
 
+// Add this at the start of the file, after other variable declarations
+let maxZIndex = 1;
+const DRAG_Z_INDEX = 100000;
+
 function startAction(ev, isMouse) {
   let touches = Array.from(ev.touches);
   let firstTouch = touches[0];
@@ -103,7 +107,9 @@ function startAction(ev, isMouse) {
     }
     offset_x = firstTouch.clientX - bounds.left;
     offset_y = firstTouch.clientY - bounds.top;
-    activeElement.style.zIndex = "100000";
+    
+    // Set extremely high z-index during drag
+    activeElement.style.zIndex = DRAG_Z_INDEX;
     initialWidth = bounds.width;
     initialHeight = bounds.height;
     initialScale = getCurrentScale(activeElement);
@@ -176,7 +182,9 @@ document.body.addEventListener("mousedown", function (ev) {
 document.body.addEventListener("touchend", function (ev) {
   if (activeElement) {
     handleContainer.style.left = "-1000px";
-    activeElement.style.zIndex = "1";
+    // Set to next available z-index when drag ends
+    maxZIndex++;
+    activeElement.style.zIndex = maxZIndex;
     let styles = window.getComputedStyle(activeElement);
     dragEndCallback(
       activeElement,
@@ -194,7 +202,9 @@ document.body.addEventListener("mouseup", function (ev) {
   handle_state = false;
 
   if (!activeElement) return;
-  activeElement.style.zIndex = "1";
+  // Set to next available z-index when drag ends
+  maxZIndex++;
+  activeElement.style.zIndex = maxZIndex;
   initialScale = getCurrentScale(activeElement);
   initialAngle = getCurrentRotation(activeElement);
   let styles = window.getComputedStyle(activeElement);
