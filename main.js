@@ -16,13 +16,18 @@ setDragEndCallback(function (element, x, y, scale, angle) {
 });
 
 // Add event listener for spawner elements
-document.addEventListener('pointerdown', handleSpawnerDrag);
+document.addEventListener('mousedown', handleSpawnerDrag);
+document.addEventListener('touchstart', handleSpawnerDrag);
 
 function handleSpawnerDrag(event) {
   const target = event.target;
   
   if (target.classList.contains('spawner')) {
     event.preventDefault();
+    
+    // Get touch or mouse coordinates
+    const clientX = event.type === 'mousedown' ? event.clientX : event.touches[0].clientX;
+    const clientY = event.type === 'mousedown' ? event.clientY : event.touches[0].clientY;
     
     // Create clone
     const clone = target.cloneNode(true);
@@ -32,8 +37,8 @@ function handleSpawnerDrag(event) {
     // Position clone at same location as original
     const rect = target.getBoundingClientRect();
     clone.style.position = 'absolute';
-    clone.style.left = (rect.left + rect.width/2) + 'px';  // Add half width to center
-    clone.style.top = (rect.top + rect.height/2) + 'px';   // Add half height to center
+    clone.style.left = (rect.left + rect.width/2) + 'px';
+    clone.style.top = (rect.top + rect.height/2) + 'px';
     clone.style.width = rect.width + 'px';
     clone.style.zIndex = window.last_z++;
     
@@ -41,15 +46,32 @@ function handleSpawnerDrag(event) {
     document.getElementById('target').appendChild(clone);
     
     // Trigger drag start on clone
-    const pointerEvent = new PointerEvent('pointerdown', {
-      bubbles: true,
-      cancelable: true,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      pointerId: event.pointerId,
-      pointerType: event.pointerType,
-      pressure: event.pressure
-    });
-    clone.dispatchEvent(pointerEvent);
+    if (event.type === 'mousedown') {
+      const mouseEvent = new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        clientX: clientX,
+        clientY: clientY
+      });
+      clone.dispatchEvent(mouseEvent);
+    } else {
+      const touch = new Touch({
+        identifier: event.touches[0].identifier,
+        target: clone,
+        clientX: clientX,
+        clientY: clientY,
+        pageX: event.touches[0].pageX,
+        pageY: event.touches[0].pageY
+      });
+      
+      const touchEvent = new TouchEvent('touchstart', {
+        bubbles: true,
+        cancelable: true,
+        touches: [touch],
+        targetTouches: [touch],
+        changedTouches: [touch]
+      });
+      clone.dispatchEvent(touchEvent);
+    }
   }
 }
