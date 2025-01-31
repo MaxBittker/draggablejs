@@ -44,6 +44,7 @@ let initialScale;
 let initialWidth;
 let initialHeight;
 let initialAngle;
+let gestureOriginSet = false; // Track if we've set the origin for current gesture
 
 let resizeHandle = document.createElement("div");
 let handleContainer = document.createElement("div");
@@ -53,6 +54,16 @@ handleContainer.appendChild(resizeHandle);
 document.body.appendChild(handleContainer);
 
 var isTouchDevice = "ontouchstart" in document.documentElement;
+
+// Convert global coordinates to element's local percentage coordinates
+function toElementPercentage(element, x, y) {
+  const rect = element.getBoundingClientRect();
+  return {
+    x: ((x - rect.left) / rect.width) * 100,
+    y: ((y - rect.top) / rect.height) * 100
+  };
+}
+
 // this moves the outline rectangle to match the current element
 function updateHandleContainer() {
   if (!activeElement) {
@@ -126,6 +137,11 @@ function startAction(ev, isMouse) {
       initialAngle = angle(pDifference) - getCurrentRotation(selectedElement);
       offset_x = pMid.x - bounds.left;
       offset_y = pMid.y - bounds.top;
+
+      // Set initial transform origin at gesture start
+      const origin = toElementPercentage(activeElement, pMid.x, pMid.y);
+      activeElement.style.transformOrigin = `${origin.x}% ${origin.y}%`;
+      gestureOriginSet = true;
     }
     let styles = window.getComputedStyle(activeElement);
 
@@ -185,6 +201,11 @@ document.body.addEventListener("touchend", function (ev) {
     // Set to next available z-index when drag ends
     maxZIndex++;
     activeElement.style.zIndex = maxZIndex;
+    
+    // Reset transform origin and gesture state
+    activeElement.style.transformOrigin = "50% 50%";
+    gestureOriginSet = false;
+    
     let styles = window.getComputedStyle(activeElement);
     dragEndCallback(
       activeElement,
@@ -205,6 +226,11 @@ document.body.addEventListener("mouseup", function (ev) {
   // Set to next available z-index when drag ends
   maxZIndex++;
   activeElement.style.zIndex = maxZIndex;
+  
+  // Reset transform origin and gesture state
+  activeElement.style.transformOrigin = "50% 50%";
+  gestureOriginSet = false;
+  
   initialScale = getCurrentScale(activeElement);
   initialAngle = getCurrentRotation(activeElement);
   let styles = window.getComputedStyle(activeElement);
@@ -243,6 +269,13 @@ function moveAction(ev, isMouse) {
     newScale = initialScale * (newDistance / initialDistance);
     x = pMid.x - offset_x + initialWidth / 2;
     y = pMid.y - offset_y + initialHeight / 2;
+
+    // Only set transform origin if it hasn't been set for this gesture
+    if (!gestureOriginSet) {
+      const origin = toElementPercentage(activeElement, pMid.x, pMid.y);
+      activeElement.style.transformOrigin = `${origin.x}% ${origin.y}%`;
+      gestureOriginSet = true;
+    }
   }
 
   if (handle_state === "resize") {
