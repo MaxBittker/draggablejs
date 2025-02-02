@@ -1,6 +1,12 @@
 // you don't need to edit this file, but you can look through it to see how the draggable works!
 // -Max 
 
+import { 
+  initializeExistingElements, 
+  observeDraggableElements,
+  getDraggableElement
+} from './matrix-transform.js';
+
 let dragStartCallback = function (element, x, y, scale, rotation) {
   // the default drag callback does nothing
 };
@@ -451,5 +457,13 @@ function angle(b) {
 function distance(a, b) {
   return magnitude(sub(a, b));
 }
+
+// Initialize matrix transform system
+initializeExistingElements();
+observeDraggableElements();
+
+const el = document.querySelector('.draggable');
+const draggable = getDraggableElement(el);
+console.log(draggable.getCurrentMatrix().toString());
 
 export { setDragStartCallback, setDragMoveCallback, setDragEndCallback };
