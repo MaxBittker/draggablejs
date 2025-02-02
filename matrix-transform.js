@@ -1,4 +1,3 @@
-// matrix-transform.js
 const draggableRegistry = new WeakMap();
 
 class DraggableElement {
@@ -12,6 +11,39 @@ class DraggableElement {
     
     // Store in registry
     draggableRegistry.set(element, this);
+  }
+
+  // Gesture handling methods
+  startGesture(event) {
+    this.updateFromCurrentTransform();
+    
+    if (event.touches?.length >= 2) {
+      // Multi-touch gesture
+      const [touch1, touch2] = event.touches;
+      this.gestureData = {
+        type: 'multi-touch',
+        startMidpoint: midpoint(touch1, touch2),
+        startDistance: distance(touch1, touch2),
+        startAngle: angle(touch1, touch2),
+        initialMatrix: this.getCurrentMatrix()
+      };
+    } else {
+      // Single touch/mouse gesture
+      const point = event.touches?.[0] ?? event;
+      this.gestureData = {
+        type: 'single-touch',
+        startPoint: { x: point.clientX, y: point.clientY },
+        initialMatrix: this.getCurrentMatrix()
+      };
+    }
+
+    return this.gestureData;
+  }
+
+  endGesture() {
+    // Store final transform as our new base
+    this.updateFromCurrentTransform();
+    this.gestureData = null;
   }
 
   updateFromCurrentTransform() {
@@ -98,40 +130,38 @@ class DraggableElement {
     this.updateFromCurrentTransform();
     this.gestureData = null;
   }
-}
 
-// Utility function to get or create DraggableElement instance
-function getDraggableElement(element) {
-  let draggable = draggableRegistry.get(element);
-  if (!draggable && element.classList.contains('draggable')) {
-    draggable = new DraggableElement(element);
+  // Calculate new transform matrix based on gesture update
+  calculateGestureMatrix(gestureUpdate) {
+    if (!this.gestureData || !gestureUpdate) return this.getCurrentMatrix();
+
+    let gestureMatrix = new DOMMatrix();
+    
+    if (gestureUpdate.type === 'multi-touch') {
+      const { scale, rotation, translation, pivot } = gestureUpdate;
+      const rotationDeg = rotation * (180 / Math.PI);
+      
+      gestureMatrix = gestureMatrix
+        .translate(pivot.x, pivot.y)
+        .rotate(rotationDeg)
+        .scale(scale)
+        .translate(-pivot.x, -pivot.y)
+        .translate(translation.x, translation.y);
+        
+    } else {
+      const { translation } = gestureUpdate;
+      gestureMatrix = gestureMatrix.translate(translation.x, translation.y);
+    }
+
+    return this.baseMatrix.multiply(gestureMatrix);
   }
-  return draggable;
-}
 
-// Initialize existing draggable elements
-function initializeExistingElements() {
-  document.querySelectorAll('.draggable').forEach(element => {
-    getDraggableElement(element);
-  });
-}
-
-// Watch for new draggable elements
-function observeDraggableElements() {
-  const observer = new MutationObserver(mutations => {
-    mutations.forEach(mutation => {
-      mutation.addedNodes.forEach(node => {
-        if (node.classList?.contains('draggable')) {
-          getDraggableElement(node);
-        }
-      });
-    });
-  });
-
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true
-  });
+  // Update transform based on gesture
+  updateFromGesture(gestureUpdate) {
+    const newMatrix = this.calculateGestureMatrix(gestureUpdate);
+    this.applyMatrix(newMatrix);
+    return newMatrix;
+  }
 }
 
 // Vector operations
@@ -222,6 +252,40 @@ function getElementBounds(element) {
   };
 }
 
+// Utility function to get or create DraggableElement instance
+function getDraggableElement(element) {
+  let draggable = draggableRegistry.get(element);
+  if (!draggable && element.classList.contains('draggable')) {
+    draggable = new DraggableElement(element);
+  }
+  return draggable;
+}
+
+// Initialize existing draggable elements
+function initializeExistingElements() {
+  document.querySelectorAll('.draggable').forEach(element => {
+    getDraggableElement(element);
+  });
+}
+
+// Watch for new draggable elements
+function observeDraggableElements() {
+  const observer = new MutationObserver(mutations => {
+    mutations.forEach(mutation => {
+      mutation.addedNodes.forEach(node => {
+        if (node.classList?.contains('draggable')) {
+          getDraggableElement(node);
+        }
+      });
+    });
+  });
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+}
+
 // Export needed functions and classes
 export {
   DraggableElement,
@@ -234,7 +298,6 @@ export {
   midpoint,
   distance,
   angle,
-  createTransformMatrix,
   transformPoint,
-  getElementBounds
+  createTransformMatrix
 };
