@@ -1,3 +1,4 @@
+// matrix-transform.js
 const draggableRegistry = new WeakMap();
 
 class DraggableElement {
@@ -30,8 +31,71 @@ class DraggableElement {
     this.element.style.transform = matrix.toString();
   }
 
-  // Reset gesture state
-  resetGestureData() {
+  // Gesture handling methods
+  startGesture(event) {
+    this.updateFromCurrentTransform();
+    
+    if (event.touches?.length >= 2) {
+      // Multi-touch gesture
+      const [touch1, touch2] = event.touches;
+      this.gestureData = {
+        type: 'multi-touch',
+        startMidpoint: midpoint(touch1, touch2),
+        startDistance: distance(touch1, touch2),
+        startAngle: angle(touch1, touch2),
+        initialMatrix: this.getCurrentMatrix()
+      };
+    } else {
+      // Single touch/mouse gesture
+      const point = event.touches?.[0] ?? event;
+      const bounds = getElementBounds(this.element);
+      
+      this.gestureData = {
+        type: 'single-touch',
+        startPoint: { x: point.clientX, y: point.clientY },
+        elementStart: { x: bounds.x, y: bounds.y },
+        initialMatrix: this.getCurrentMatrix()
+      };
+    }
+
+    return this.gestureData;
+  }
+
+  updateGesture(event) {
+    if (!this.gestureData) return null;
+
+    const { type, initialMatrix } = this.gestureData;
+    let gestureUpdate;
+
+    if (type === 'multi-touch' && event.touches?.length >= 2) {
+      const [touch1, touch2] = event.touches;
+      const currentMidpoint = midpoint(touch1, touch2);
+      const currentDistance = distance(touch1, touch2);
+      const currentAngle = angle(touch1, touch2);
+
+      return {
+        type: 'multi-touch',
+        scale: currentDistance / this.gestureData.startDistance,
+        rotation: currentAngle - this.gestureData.startAngle,
+        translation: Vector.subtract(currentMidpoint, this.gestureData.startMidpoint),
+        pivot: this.gestureData.startMidpoint
+      };
+    } else {
+      const point = event.touches?.[0] ?? event;
+      const currentPoint = { x: point.clientX, y: point.clientY };
+      
+      return {
+        type: 'single-touch',
+        translation: Vector.subtract(currentPoint, this.gestureData.startPoint),
+        scale: 1,
+        rotation: 0
+      };
+    }
+  }
+
+  endGesture() {
+    // Store final transform as our new base
+    this.updateFromCurrentTransform();
     this.gestureData = null;
   }
 }

@@ -1,6 +1,7 @@
 // you don't need to edit this file, but you can look through it to see how the draggable works!
 // -Max 
 
+import { initializeGestureCollection } from './gesture-collector.js';
 import { 
   initializeExistingElements, 
   observeDraggableElements,
@@ -461,6 +462,7 @@ function distance(a, b) {
 }
 
 // Initialize matrix transform system
+initializeGestureCollection();
 initializeExistingElements();
 observeDraggableElements();
 
