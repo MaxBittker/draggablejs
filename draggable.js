@@ -5,9 +5,6 @@ import { initializeGestureCollection } from './gesture-collector.js';
 import { 
   initializeExistingElements, 
   observeDraggableElements,
-  getDraggableElement,
-  createTransformMatrix,
-  transformPoint
 } from './matrix-transform.js';
 
 let dragStartCallback = function (element, x, y, scale, rotation) {
@@ -465,25 +462,5 @@ function distance(a, b) {
 initializeGestureCollection();
 initializeExistingElements();
 observeDraggableElements();
-
-const el = document.querySelector('.draggable');
-const draggable = getDraggableElement(el);
-console.log(draggable.getCurrentMatrix().toString());
-
-// Test point transformation
-const point = { x: 100, y: 100 };
-const matrix = draggable.getCurrentMatrix();
-const transformed = transformPoint(point, matrix);
-console.log('Original point:', point);
-console.log('Transformed point:', transformed);
-
-// Test matrix creation
-const testMatrix = createTransformMatrix({
-  translate: { x: 10, y: 10 },
-  rotate: Math.PI / 4,  // 45 degrees
-  scale: 1.5,
-  pivot: { x: 50, y: 50 }
-});
-console.log('Test matrix:', testMatrix.toString());
 
 export { setDragStartCallback, setDragMoveCallback, setDragEndCallback };

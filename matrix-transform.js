@@ -1,98 +1,5 @@
 const draggableRegistry = new WeakMap();
 
-// Add debug visualization container at the top of the file after draggableRegistry
-const DEBUG_GESTURES = true;
-const debugLayer = document.createElement('div');
-debugLayer.id = 'gesture-debug-layer';
-debugLayer.style.cssText = `
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: 10000;
-`;
-document.body.appendChild(debugLayer);
-
-function visualizePoint(point, color, label) {
-  if (!DEBUG_GESTURES) return;
-  
-  const marker = document.createElement('div');
-  marker.style.cssText = `
-    position: absolute;
-    width: 10px;
-    height: 10px;
-    background: ${color};
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
-    left: ${point.x}px;
-    top: ${point.y}px;
-  `;
-  
-  if (label) {
-    const text = document.createElement('div');
-    text.style.cssText = `
-      position: absolute;
-      left: 15px;
-      top: -10px;
-      color: ${color};
-      font-size: 12px;
-      white-space: nowrap;
-    `;
-    text.textContent = label;
-    marker.appendChild(text);
-  }
-  
-  debugLayer.appendChild(marker);
-  setTimeout(() => marker.remove(), 1000); // Remove after 1s
-}
-
-function visualizeGestureState(gestureUpdate, element, points) {
-  if (!DEBUG_GESTURES) return;
-  
-  console.log('Visualizing gesture state:', { gestureUpdate, points });
-  
-  // Clear previous visualization
-  debugLayer.innerHTML = '';
-  
-  // Get element bounds for reference
-  const bounds = getElementBounds(element);
-  
-  // Always show element center
-  visualizePoint(bounds, 'red', 'Element Center');
-  
-  if (gestureUpdate.type === 'multi-touch' && points.length >= 2) {
-    // Show both touch points
-    visualizePoint(points[0], 'rgba(0,255,0,0.5)', 'Touch 1');
-    visualizePoint(points[1], 'rgba(0,255,0,0.5)', 'Touch 2');
-    
-    // Show pivot point
-    const touchMidpoint = midpoint(points[0], points[1]);
-    visualizePoint(touchMidpoint, 'blue', 'Pivot (Touch Midpoint)');
-    
-    // Log detailed state
-    console.log('Multi-touch Debug:', {
-      touchPoints: points,
-      midpoint: touchMidpoint,
-      elementCenter: bounds,
-      scale: gestureUpdate.scale,
-      rotation: (gestureUpdate.rotation * 180 / Math.PI).toFixed(2) + '°',
-      translation: gestureUpdate.translation
-    });
-  } else if (gestureUpdate.type === 'single-touch' && points.length === 1) {
-    // Show single touch point
-    visualizePoint(points[0], 'green', 'Touch Point');
-    
-    // Log detailed state
-    console.log('Single-touch Debug:', {
-      touchPoint: points[0],
-      elementCenter: bounds,
-      translation: gestureUpdate.translation
-    });
-  }
-}
-
 class DraggableElement {
   constructor(element) {
     this.element = element;
@@ -240,10 +147,6 @@ class DraggableElement {
       };
     }
 
-    if (gestureUpdate && DEBUG_GESTURES) {
-      visualizeGestureState(gestureUpdate, this.element, currentPoints);
-    }
-
     return gestureUpdate;
   }
 
@@ -280,16 +183,6 @@ class DraggableElement {
       const { scale, rotation, translation, pivot } = gestureUpdate;
       const rotationDeg = rotation * (180 / Math.PI);
       
-      if (DEBUG_GESTURES) {
-        console.log('Calculating Matrix:', {
-          scale,
-          rotationDeg,
-          translation,
-          pivotPoint: pivot,
-          matrixBefore: this.getCurrentMatrix().toString()
-        });
-      }
-      
       // Apply transforms around the touch midpoint
       gestureMatrix = gestureMatrix
         .translate(pivot.x, pivot.y)
@@ -297,13 +190,6 @@ class DraggableElement {
         .scale(scale)
         .translate(-pivot.x, -pivot.y)
         .translate(translation.x, translation.y);
-        
-      if (DEBUG_GESTURES) {
-        console.log('Matrix Result:', {
-          gestureMatrix: gestureMatrix.toString(),
-          finalMatrix: this.gestureData.initialMatrix.multiply(gestureMatrix).toString()
-        });
-      }
     } else {
       const { translation } = gestureUpdate;
       gestureMatrix = gestureMatrix.translate(translation.x, translation.y);
