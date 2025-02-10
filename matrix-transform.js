@@ -5,12 +5,49 @@ class DraggableElement {
     this.element = element;
     this.baseMatrix = new DOMMatrix();
     this.gestureData = null;
+    this.transformOrigin = { x: 50, y: 50 }; // Default to center (50%)
     
     // Initialize from any existing transform
     this.updateFromCurrentTransform();
     
     // Store in registry
     draggableRegistry.set(element, this);
+  }
+
+  // Update transform origin in percentages (0-100)
+  setTransformOrigin(x, y) {
+    this.transformOrigin = { x, y };
+    this.element.style.transformOrigin = `${x}% ${y}%`;
+  }
+
+  // Convert page coordinates to element-relative coordinates
+  pageToElementSpace(pageX, pageY) {
+    const rect = this.element.getBoundingClientRect();
+    const elementMatrix = this.getCurrentMatrix();
+    const inverseMatrix = elementMatrix.inverse();
+    
+    // Create a point in page space
+    const point = new DOMPoint(pageX - rect.left, pageY - rect.top);
+    
+    // Transform the point to element space
+    const transformedPoint = point.matrixTransform(inverseMatrix);
+    return transformedPoint;
+  }
+
+  // Convert element-relative coordinates to page coordinates
+  elementToPageSpace(elementX, elementY) {
+    const rect = this.element.getBoundingClientRect();
+    const elementMatrix = this.getCurrentMatrix();
+    
+    // Create a point in element space
+    const point = new DOMPoint(elementX, elementY);
+    
+    // Transform the point to page space
+    const transformedPoint = point.matrixTransform(elementMatrix);
+    return {
+      x: transformedPoint.x + rect.left,
+      y: transformedPoint.y + rect.top
+    };
   }
 
   startGesture(event) {
@@ -24,9 +61,21 @@ class DraggableElement {
     if (event.touches?.length >= 2) {
       // Multi-touch gesture
       const [touch1, touch2] = event.touches;
+      const startMidpoint = midpoint(touch1, touch2);
+      
+      // Convert midpoint to element space for transform origin
+      const elementMidpoint = this.pageToElementSpace(startMidpoint.x, startMidpoint.y);
+      const rect = this.element.getBoundingClientRect();
+      
+      // Set transform origin to gesture midpoint
+      this.setTransformOrigin(
+        (elementMidpoint.x / rect.width) * 100,
+        (elementMidpoint.y / rect.height) * 100
+      );
+      
       this.gestureData = {
         type: 'multi-touch',
-        startMidpoint: midpoint(touch1, touch2),
+        startMidpoint,
         startDistance: distance(touch1, touch2),
         startAngle: angle(touch1, touch2),
         initialMatrix: this.getCurrentMatrix(),
@@ -183,12 +232,15 @@ class DraggableElement {
       const { scale, rotation, translation, pivot } = gestureUpdate;
       const rotationDeg = rotation * (180 / Math.PI);
       
-      // Apply transforms around the touch midpoint
+      // Convert pivot point to element space
+      const elementPivot = this.pageToElementSpace(pivot.x, pivot.y);
+      
+      // Apply transforms around the element-space pivot
       gestureMatrix = gestureMatrix
-        .translate(pivot.x, pivot.y)
+        .translate(elementPivot.x, elementPivot.y)
         .rotate(rotationDeg)
         .scale(scale)
-        .translate(-pivot.x, -pivot.y)
+        .translate(-elementPivot.x, -elementPivot.y)
         .translate(translation.x, translation.y);
     } else {
       const { translation } = gestureUpdate;
@@ -245,29 +297,39 @@ function createIdentityMatrix() {
 }
 
 function decomposeMatrix(matrix) {
-  // Extract scale, rotation, and translation from matrix
-  const scale = Math.sqrt(matrix.a * matrix.a + matrix.b * matrix.b);
+  // Extract scale (using the magnitude of the first column vector)
+  const scaleX = Math.sqrt(matrix.a * matrix.a + matrix.b * matrix.b);
+  const scaleY = Math.sqrt(matrix.c * matrix.c + matrix.d * matrix.d);
+  
+  // Extract rotation (in radians)
   const rotation = Math.atan2(matrix.b, matrix.a);
+  
+  // Extract translation
+  const translation = {
+    x: matrix.e,
+    y: matrix.f
+  };
+  
   return {
-    scale,
+    scale: scaleX, // Assuming uniform scale
     rotation,
-    translateX: matrix.e,
-    translateY: matrix.f
+    translation,
+    scaleX,
+    scaleY
   };
 }
 
-function createTransformMatrix({ translate, rotate, scale, pivot }) {
+function createTransformMatrix({ translate = { x: 0, y: 0 }, rotate = 0, scale = 1, pivot = null }) {
   let matrix = new DOMMatrix();
   
   if (pivot) {
-    // Transform around pivot point
     matrix = matrix
       .translate(pivot.x, pivot.y)
       .rotate(rotate * (180 / Math.PI))
       .scale(scale)
-      .translate(-pivot.x, -pivot.y);
+      .translate(-pivot.x, -pivot.y)
+      .translate(translate.x, translate.y);
   } else {
-    // Transform around origin
     matrix = matrix
       .translate(translate.x, translate.y)
       .rotate(rotate * (180 / Math.PI))
@@ -330,75 +392,112 @@ function observeDraggableElements() {
 
 class HitTestingManager {
   constructor() {
+    // Create offscreen canvas for hit testing
     this.canvas = document.createElement('canvas');
     this.ctx = this.canvas.getContext('2d');
+    
+    // Update canvas size on window resize
+    this.updateCanvasSize();
+    window.addEventListener('resize', () => this.updateCanvasSize());
+  }
+
+  updateCanvasSize() {
     this.canvas.width = window.innerWidth;
     this.canvas.height = window.innerHeight;
   }
 
-  // Test if a point hits an opaque pixel in an image element
-  testImageHit(element, point) {
-    if (element.tagName !== 'IMG') {
-      return true; // Non-image elements are always considered "hit"
+  // Test if a point hits an element, considering transforms
+  testElementHit(element, point) {
+    const draggable = getDraggableElement(element);
+    if (!draggable) return true; // Non-draggable elements are always "hit"
+
+    // Get element's transform matrix
+    const matrix = draggable.getCurrentMatrix();
+    const inverseMatrix = matrix.inverse();
+
+    // Transform the point to element's local space
+    const elementPoint = new DOMPoint(point.x, point.y).matrixTransform(inverseMatrix);
+    const bounds = element.getBoundingClientRect();
+
+    // Check if point is within element bounds
+    if (elementPoint.x < 0 || elementPoint.x > bounds.width ||
+        elementPoint.y < 0 || elementPoint.y > bounds.height) {
+      return false;
     }
 
-    // Ensure image can be used on canvas
-    element.crossOrigin = 'anonymous';
-    
-    // Clear canvas
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    
-    // Get element's current transform
-    const draggable = getDraggableElement(element);
-    if (!draggable) return true;
-    
-    const matrix = draggable.getCurrentMatrix();
-    const bounds = getElementBounds(element);
-    
-    // Apply the element's transform to the canvas
-    this.ctx.setTransform(matrix);
-    
-    // Draw the image
-    this.ctx.drawImage(
-      element,
-      -element.width / 2,
-      -element.height / 2,
-      element.width,
-      element.height
-    );
-    
-    // Reset transform for pixel testing
-    this.ctx.resetTransform();
+    // For images, check pixel transparency
+    if (element.tagName === 'IMG') {
+      return this.testImagePixel(element, elementPoint, matrix);
+    }
+
+    return true;
+  }
+
+  // Test if a pixel in an image is opaque
+  testImagePixel(image, point, matrix) {
+    if (!image.complete) return true; // Image not loaded, assume hit
     
     try {
-      // Test pixel alpha at point
+      // Clear canvas
+      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      
+      // Set up the transform
+      this.ctx.setTransform(
+        matrix.a, matrix.b,
+        matrix.c, matrix.d,
+        matrix.e, matrix.f
+      );
+      
+      // Draw the image
+      this.ctx.drawImage(
+        image,
+        -image.width / 2,
+        -image.height / 2,
+        image.width,
+        image.height
+      );
+      
+      // Reset transform for pixel testing
+      this.ctx.resetTransform();
+      
+      // Test pixel alpha
       const pixel = this.ctx.getImageData(point.x, point.y, 1, 1);
-      if (!element.complete) return true;
       return pixel.data[3] > 0; // Return true if pixel is not fully transparent
+      
     } catch (e) {
       console.warn('Hit testing failed - ensure images have crossorigin="anonymous"');
-      return true;
+      return true; // Assume hit on error
     }
   }
 
-  // Find the topmost draggable element at a point
-  findTopmostElementAt(point) {
+  // Get all draggable elements at a point, sorted by z-index
+  getDraggableElementsAtPoint(point) {
+    // Get all elements at point
     const elements = document.elementsFromPoint(point.x, point.y);
     
-    for (const element of elements) {
-      if (!element.classList.contains('draggable')) continue;
-      
-      // For images, check pixel transparency
-      if (element.tagName === 'IMG') {
-        if (this.testImageHit(element, point)) {
-          return element;
-        }
-        // If we hit a transparent pixel, continue to next element
-        continue;
+    // Filter to only draggable elements
+    const draggables = elements
+      .filter(el => el.classList.contains('draggable'))
+      .map(el => ({
+        element: el,
+        zIndex: parseInt(getComputedStyle(el).zIndex) || 0,
+        transform: new DOMMatrix(getComputedStyle(el).transform)
+      }))
+      .sort((a, b) => b.zIndex - a.zIndex); // Sort by z-index, highest first
+    
+    return draggables;
+  }
+
+  // Find the topmost draggable element at a point that passes hit testing
+  findTopmostElementAt(point) {
+    // Get sorted draggable elements
+    const draggables = this.getDraggableElementsAtPoint(point);
+    
+    // Find first element that passes hit test
+    for (const { element } of draggables) {
+      if (this.testElementHit(element, point)) {
+        return element;
       }
-      
-      // For non-images, return first draggable found
-      return element;
     }
     
     return null;
