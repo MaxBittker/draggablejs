@@ -323,12 +323,18 @@ function createTransformMatrix({ translate = { x: 0, y: 0 }, rotate = 0, scale =
   let matrix = new DOMMatrix();
   
   if (pivot) {
-    matrix = matrix
-      .translate(pivot.x, pivot.y)
-      .rotate(rotate * (180 / Math.PI))
-      .scale(scale)
-      .translate(-pivot.x, -pivot.y)
-      .translate(translate.x, translate.y);
+    // Translate to pivot point
+    matrix = matrix.translate(pivot.x, pivot.y);
+    
+    // Apply rotation and scale
+    matrix = matrix.rotate(rotate * (180 / Math.PI));
+    matrix = matrix.scale(scale);
+    
+    // Translate back from pivot point
+    matrix = matrix.translate(-pivot.x, -pivot.y);
+    
+    // Apply any additional translation
+    matrix = matrix.translate(translate.x, translate.y);
   } else {
     matrix = matrix
       .translate(translate.x, translate.y)
@@ -509,30 +515,22 @@ const hitTesting = new HitTestingManager();
 
 class ResizeHandle {
   constructor() {
-    // Check if device has touch capability
     this.isTouchDevice = 'ontouchstart' in document.documentElement;
-    
-    // Create handle elements
     this.container = document.createElement('div');
     this.handle = document.createElement('div');
     
-    // Set up classes
     this.container.classList.add('handle-container');
     this.handle.classList.add('resize-handle');
     
-    // Add handle to container
     this.container.appendChild(this.handle);
     document.body.appendChild(this.container);
     
-    // Initialize state
     this.activeDraggable = null;
     this.isResizing = false;
     this.initialData = null;
     
-    // Hide handle initially
     this.detach();
     
-    // Only bind mouse events if not a touch device
     if (!this.isTouchDevice) {
       this.handle.addEventListener('mousedown', this.onResizeStart.bind(this));
       document.addEventListener('mousemove', this.onResizeMove.bind(this));
@@ -541,16 +539,15 @@ class ResizeHandle {
   }
 
   attachToDraggable(draggable) {
-    // Don't show handle on touch devices
-    if (this.isTouchDevice) return;
-    
-    if (this.activeDraggable === draggable) return;
-    
+    if (this.isTouchDevice || this.activeDraggable === draggable) return;
     this.activeDraggable = draggable;
     this.updatePosition();
   }
 
   detach() {
+    if (this.isResizing) {
+      console.log('ResizeHandle: Detaching during active resize operation');
+    }
     this.activeDraggable = null;
     this.container.style.left = '-1000px';
   }
@@ -562,13 +559,11 @@ class ResizeHandle {
     const matrix = this.activeDraggable.getCurrentMatrix();
     const bounds = getElementBounds(element);
     
-    // Update container position and size
     this.container.style.left = `${bounds.x}px`;
     this.container.style.top = `${bounds.y}px`;
     this.container.style.width = `${bounds.width}px`;
     this.container.style.height = `${bounds.height}px`;
     
-    // Extract rotation from matrix for handle container
     const { rotation } = decomposeMatrix(matrix);
     this.container.style.transform = `
       translate(-50%, -50%)
@@ -577,36 +572,66 @@ class ResizeHandle {
   }
 
   onResizeStart(event) {
-    if (!this.activeDraggable) return;
+    console.group('ResizeHandle: Scale Operation Started');
+    
+    if (!this.activeDraggable) {
+      console.error('No active draggable element - cannot start scaling');
+      console.groupEnd();
+      return;
+    }
     
     event.preventDefault();
+    event.stopPropagation();
+    
     this.isResizing = true;
     
-    // Get the initial point
     const point = event.touches?.[0] ?? event;
-    const bounds = getElementBounds(this.activeDraggable.element);
-    const center = { x: bounds.x, y: bounds.y };
+    const element = this.activeDraggable.element;
+    const rect = element.getBoundingClientRect();
     
-    // Store initial data for the gesture
+    // Use element's center as pivot point
+    const center = {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2
+    };
+    
+    const distance = Math.sqrt(
+      Math.pow(point.clientX - center.x, 2) + 
+      Math.pow(point.clientY - center.y, 2)
+    );
+    
     this.initialData = {
       point: { x: point.clientX, y: point.clientY },
       center,
       matrix: this.activeDraggable.getCurrentMatrix(),
-      distance: Math.sqrt(
-        Math.pow(point.clientX - center.x, 2) + 
-        Math.pow(point.clientY - center.y, 2)
-      )
+      distance,
+      rect // Store initial rect for reference
     };
+    
+    console.log('Initial scale data:', {
+      center,
+      distance,
+      matrix: this.initialData.matrix.toString(),
+      rect: {
+        width: rect.width,
+        height: rect.height,
+        left: rect.left,
+        top: rect.top
+      }
+    });
+    console.groupEnd();
   }
 
   onResizeMove(event) {
-    if (!this.isResizing || !this.initialData) return;
+    if (!this.isResizing || !this.initialData || !this.activeDraggable) return;
+    
+    event.preventDefault();
+    event.stopPropagation();
     
     const point = event.touches?.[0] ?? event;
     const currentPoint = { x: point.clientX, y: point.clientY };
     const { center, matrix: initialMatrix, distance: initialDistance } = this.initialData;
     
-    // Calculate new distance and angle
     const currentDistance = Math.sqrt(
       Math.pow(currentPoint.x - center.x, 2) + 
       Math.pow(currentPoint.y - center.y, 2)
@@ -621,32 +646,44 @@ class ResizeHandle {
       currentPoint.y - center.y,
       currentPoint.x - center.x
     );
+
+    // Set transform origin to center before applying transforms
+    this.activeDraggable.setTransformOrigin(50, 50);
     
     // Create transform matrix for the resize/rotate operation
-    const resizeMatrix = createTransformMatrix({
-      translate: { x: 0, y: 0 },
-      rotate: currentAngle - initialAngle,
-      scale: currentDistance / initialDistance,
-      pivot: center
-    });
-    
-    // Apply the transform
-    const newMatrix = initialMatrix.multiply(resizeMatrix);
+    const gestureMatrix = new DOMMatrix()
+      .rotate((currentAngle - initialAngle) * (180 / Math.PI))
+      .scale(currentDistance / initialDistance);
+
+    const newMatrix = initialMatrix.multiply(gestureMatrix);
     this.activeDraggable.applyMatrix(newMatrix);
-    
-    // Update handle position
     this.updatePosition();
   }
 
-  onResizeEnd() {
+  onResizeEnd(event) {
     if (!this.isResizing) return;
+    
+    // Prevent event from bubbling to gesture system
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    
+    console.group('ResizeHandle: Scale Operation Ended');
+    if (this.activeDraggable) {
+      const finalMatrix = this.activeDraggable.getCurrentMatrix();
+      const { scale, rotation } = decomposeMatrix(finalMatrix);
+      console.log('Final transform state:', {
+        scale,
+        rotation: rotation * (180 / Math.PI) + 'deg',
+        matrix: finalMatrix.toString()
+      });
+      this.activeDraggable.updateFromCurrentTransform();
+    }
     
     this.isResizing = false;
     this.initialData = null;
-    
-    if (this.activeDraggable) {
-      this.activeDraggable.updateFromCurrentTransform();
-    }
+    console.groupEnd();
   }
 }
 
