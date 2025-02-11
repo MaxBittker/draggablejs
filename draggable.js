@@ -1,6 +1,16 @@
 // you don't need to edit this file, but you can look through it to see how the draggable works!
 // -Max 
 
+import { initializeGestureCollection } from './gesture-collector.js';
+import { 
+  initializeExistingElements, 
+  observeDraggableElements,
+  getDraggableElement,
+  hitTesting,
+  decomposeMatrix,
+  resizeHandle,
+} from './matrix-transform.js';
+
 let dragStartCallback = function (element, x, y, scale, rotation) {
   // the default drag callback does nothing
 };
@@ -32,341 +42,275 @@ function setDragEndCallback(callback) {
     throw new Error("drag callback must be a function!");
   }
 }
-let activeElement = null;
-let mousedown = false;
-let handle_state = false;
-let offset_x;
-let offset_y;
 
-window.last_z = 1;
-let initialDistance;
-let initialScale;
-let initialWidth;
-let initialHeight;
-let initialAngle;
-
-let resizeHandle = document.createElement("div");
-let handleContainer = document.createElement("div");
-resizeHandle.classList.add("resize-handle");
-handleContainer.classList.add("handle-container");
-handleContainer.appendChild(resizeHandle);
-document.body.appendChild(handleContainer);
-
-var isTouchDevice = "ontouchstart" in document.documentElement;
-// this moves the outline rectangle to match the current element
-function updateHandleContainer() {
-  if (!activeElement) {
-    handleContainer.style.left = "-1000px";
-    return;
-  }
-  let styles = window.getComputedStyle(activeElement);
-  let scale = getCurrentScale(activeElement);
-  let rotate = getCurrentRotation(activeElement);
-  handleContainer.style.left = styles.left;
-  handleContainer.style.top = styles.top;
-  handleContainer.style.width = parseFloat(styles.width) * scale + "px";
-  handleContainer.style.height = parseFloat(styles.height) * scale + "px";
-  handleContainer.style.transform = `
-   translate(-50%,-50%)
-   rotate(${rotate * (180 / Math.PI)}deg)`;
-}
-
-// Add this at the start of the file, after other variable declarations
 let maxZIndex = 1;
 const DRAG_Z_INDEX = 100000;
 
+let activeElement = null;
+let isMouseDown = false;
+
+window.last_z = 1;
+
 function startAction(ev, isMouse) {
-  let touches = Array.from(ev.touches);
-  let firstTouch = touches[0];
-  if (firstTouch.target.classList.contains("resize-handle")) {
-    ev.preventDefault();
-    initialScale = getCurrentScale(activeElement);
-    initialAngle = getCurrentRotation(activeElement);
-    let styles = window.getComputedStyle(activeElement);
-    dragStartCallback(
-      activeElement,
-      parseFloat(styles.left),
-      parseFloat(styles.top),
-      initialScale,
-      initialAngle
-    );
+  // Normalize the event data for both mouse and touch
+  const point = isMouse ? ev : ev.touches[0];
+  
+  // Early return if not a draggable or resize handle target
+  if (!point.target.classList.contains("draggable") && 
+      !point.target.classList.contains("resize-handle")) {
+    return;
   }
-  if (firstTouch.target.classList.contains("draggable")) {
-    if (firstTouch.target.tagName === "IMG") {
-      ev.preventDefault();
-    }
-    let selectedElement = checkImageCoord(firstTouch.target, ev);
-    if (!selectedElement || !selectedElement.classList.contains("draggable")) {
+
+  // Prevent default for images
+  if (point.target.tagName === "IMG") {
+    ev.preventDefault();
+  }
+
+  // Handle resize handle interaction
+  if (point.target.classList.contains("resize-handle")) {
+    ev.preventDefault();
+    return;
+  }
+  
+  // Get the actual draggable element (handling image click-through)
+  let selectedElement = hitTesting.findTopmostElementAt({
+    x: point.clientX,
+    y: point.clientY
+  });
+
+  if (!selectedElement || !selectedElement.classList.contains("draggable")) {
+    if (point.target.classList.contains("draggable")) {
+      selectedElement = point.target;
+      activeElement = selectedElement;
+    } else {
       return;
     }
+  } else {
+    // Set the active element if hit testing succeeded
     activeElement = selectedElement;
-
-    let bounds = selectedElement.getBoundingClientRect();
-    if (isMouse) {
-      updateHandleContainer();
-    }
-    offset_x = firstTouch.clientX - bounds.left;
-    offset_y = firstTouch.clientY - bounds.top;
-    
-    // Set extremely high z-index during drag
-    activeElement.style.zIndex = DRAG_Z_INDEX;
-    initialWidth = bounds.width;
-    initialHeight = bounds.height;
-    initialScale = getCurrentScale(activeElement);
-    initialAngle = getCurrentRotation(activeElement);
-
-    let secondTouch = touches[1];
-    if (secondTouch) {
-      let p1 = { x: firstTouch.clientX, y: firstTouch.clientY };
-      let p2 = { x: secondTouch.clientX, y: secondTouch.clientY };
-      let pDifference = sub(p1, p2);
-      let pMid = add(p1, scale(pDifference, 0.5));
-
-      initialDistance = distance(p1, p2);
-      initialAngle = angle(pDifference) - getCurrentRotation(selectedElement);
-      offset_x = pMid.x - bounds.left;
-      offset_y = pMid.y - bounds.top;
-    }
-    let styles = window.getComputedStyle(activeElement);
-
-    dragStartCallback(
-      activeElement,
-      parseFloat(styles.left),
-      parseFloat(styles.top),
-      initialScale,
-      initialAngle
-    );
   }
+
+  // Get or create DraggableElement instance
+  const draggable = getDraggableElement(selectedElement);
+  
+  if (!draggable) {
+    console.error('Failed to get/create DraggableElement');
+    console.groupEnd();
+    return;
+  }
+
+  // Set high z-index during drag (maintaining legacy behavior)
+  selectedElement.style.zIndex = DRAG_Z_INDEX;
+  console.log('Set z-index to:', DRAG_Z_INDEX);
+
+  // Start the gesture using matrix transform system
+  console.log('Starting gesture with event:', ev);
+  draggable.startGesture(ev);
+
+  // Show resize handle for mouse interactions
+  if (isMouse && !resizeHandle.isResizing) {
+    console.log('Attaching resize handle for mouse interaction');
+    resizeHandle.attachToDraggable(draggable);
+    resizeHandle.updatePosition(); // Immediately update position
+  }
+
+  // Trigger legacy callback with decomposed matrix values
+  const matrix = draggable.getCurrentMatrix();
+  const { translation, scale, rotation } = decomposeMatrix(matrix);
+  console.log('Matrix decomposition:', { translation, scale, rotation });
+  
+  dragStartCallback(
+    selectedElement,
+    translation.x,
+    translation.y,
+    scale,
+    rotation
+  );
+  
+  console.groupEnd();
 }
-document.body.addEventListener("touchstart", function (ev) {
-  if (activeElement) {
-    handleContainer.style.left = "-1000px";
+
+// Mouse events
+document.addEventListener("mousedown", function(ev) {
+  isMouseDown = true;
+  startAction(ev, true);
+});
+
+document.addEventListener("mousemove", function(ev) {
+  if (!isMouseDown || !activeElement) return;
+  moveAction(ev, true);
+  
+  // Ensure resize handle stays visible during movement
+  const draggable = getDraggableElement(activeElement);
+  if (draggable) {
+    resizeHandle.attachToDraggable(draggable);
+    resizeHandle.updatePosition();
   }
+});
+
+document.addEventListener("mouseup", function(ev) {
+  if (!activeElement) return;
+  
+  const draggable = getDraggableElement(activeElement);
+  if (draggable) {
+    draggable.endGesture();
+    
+    // Keep resize handle visible after interaction ends
+    resizeHandle.attachToDraggable(draggable);
+    resizeHandle.updatePosition();
+  }
+  
+  // Reset state
+  activeElement = null;
+  isMouseDown = false;
+  gestureOriginSet = false;
+});
+
+// Touch events
+document.addEventListener("touchstart", function(ev) {
   startAction(ev, false);
 });
 
-document.body.addEventListener("mousedown", function (ev) {
-  if (isTouchDevice) {
-    return;
-  }
-
-  if (ev.target.classList.contains("resize-handle") && activeElement) {
-    let styles = window.getComputedStyle(activeElement);
-    let scale = getCurrentScale(activeElement);
-    let rotate = getCurrentRotation(activeElement);
-    let size = {
-      x: parseFloat(styles.width) * scale,
-      y: parseFloat(styles.height) * scale
-    };
-
-    handleContainer.style.transform = `
-     translate(-50%,-50%)
-     rotate(${rotate * (180 / Math.PI)}deg)`;
-
-    initialDistance = magnitude(size);
-
-    handle_state = "resize";
-  } else {
-    handle_state = false;
-    if (activeElement) {
-      handleContainer.style.left = "-1000px";
-      activeElement = false;
-    }
-  }
-
-  mousedown = true;
-
-  ev.touches = [ev];
-  startAction(ev, true);
+document.addEventListener("touchmove", function(ev) {
+  if (!activeElement) return;
+  moveAction(ev, false);
 });
-document.body.addEventListener("touchend", function (ev) {
-  if (activeElement) {
-    handleContainer.style.left = "-1000px";
+
+document.addEventListener("touchend", function(ev) {
+  if (!activeElement) return;
+  
+  const draggable = getDraggableElement(activeElement);
+  if (draggable) {
+    // Update the base matrix to include the current gesture
+    draggable.endGesture();
+    
     // Set to next available z-index when drag ends
     maxZIndex++;
     activeElement.style.zIndex = maxZIndex;
-    let styles = window.getComputedStyle(activeElement);
-    dragEndCallback(
-      activeElement,
-      parseFloat(styles.left),
-      parseFloat(styles.top),
-      getCurrentScale(activeElement),
-      getCurrentRotation(activeElement)
-    );
   }
-
+  
+  // Reset state
   activeElement = null;
-});
-document.body.addEventListener("mouseup", function (ev) {
   mousedown = false;
   handle_state = false;
-
-  if (!activeElement) return;
-  // Set to next available z-index when drag ends
-  maxZIndex++;
-  activeElement.style.zIndex = maxZIndex;
-  initialScale = getCurrentScale(activeElement);
-  initialAngle = getCurrentRotation(activeElement);
-  let styles = window.getComputedStyle(activeElement);
-  dragEndCallback(
-    activeElement,
-    parseFloat(styles.left),
-    parseFloat(styles.top),
-    getCurrentScale(activeElement),
-    getCurrentRotation(activeElement)
-  );
+  gestureOriginSet = false;
+  
+  // Detach resize handle
+  resizeHandle.detach();
 });
 
 function moveAction(ev, isMouse) {
+  console.group('moveAction');
+  
   if (!activeElement) {
+    console.warn('No active element, returning');
+    console.groupEnd();
     return;
   }
 
-  let touches = Array.from(ev.touches);
-  let firstTouch = touches[0];
-
-  let x = firstTouch.clientX - offset_x + initialWidth / 2;
-  let y = firstTouch.clientY - offset_y + initialHeight / 2;
-
-  let newScale = initialScale;
-  let newAngle = initialAngle;
-
-  let secondTouch = touches[1];
-  if (secondTouch) {
-    let p1 = { x: firstTouch.clientX, y: firstTouch.clientY };
-    let p2 = { x: secondTouch.clientX, y: secondTouch.clientY };
-    let pDifference = sub(p1, p2);
-    let pMid = add(p1, scale(pDifference, 0.5));
-
-    let newDistance = distance(p1, p2);
-    newAngle = angle(pDifference) - initialAngle;
-    newScale = initialScale * (newDistance / initialDistance);
-    x = pMid.x - offset_x + initialWidth / 2;
-    y = pMid.y - offset_y + initialHeight / 2;
+  const draggable = getDraggableElement(activeElement);
+  console.log('DraggableElement instance:', draggable);
+  
+  if (!draggable) {
+    console.error('Failed to get DraggableElement for active element');
+    console.groupEnd();
+    return;
   }
 
-  if (handle_state === "resize") {
-    let b = activeElement.getBoundingClientRect();
-    let p1 = { x: firstTouch.clientX, y: firstTouch.clientY };
-    let center = { x: b.left + b.width / 2, y: b.top + b.height / 2 };
-    let p2 = add(center, sub(p1, center));
-    let newDistance = distance(p1, p2);
+  // Log movement data
+  console.log('Movement data:', {
+    clientX: ev.clientX,
+    clientY: ev.clientY,
+    touches: ev.touches
+  });
 
-    newScale = initialScale * (newDistance / initialDistance);
-
-    let pDifference = sub(p1, p2);
-    let handleAngle = angle(pDifference);
-
-    let styles = window.getComputedStyle(activeElement);
-    let w = parseFloat(styles.width);
-    let h = parseFloat(styles.height);
-    let a = Math.atan2(h, w) + Math.PI;
-
-    newAngle = handleAngle - a;
-  } else if (!handle_state) {
-    activeElement.style.left = x + "px";
-    activeElement.style.top = y + "px";
-  }
-
-  activeElement.style.transform = `
-  translate(-50%,-50%)
-  scale(${newScale})
-  rotate(${newAngle * (180 / Math.PI)}deg)`;
-
-  dragMoveCallback(activeElement, x, y, newScale, newAngle);
-
-  if (isMouse) {
-    try {
-      updateHandleContainer();
-    } catch (e) {
-      console.log(e);
+  // For touch events, calculate movement from touch data
+  let gestureUpdate;
+  
+  if (ev.touches) {
+    // Reference gesture-collector.js lines 129-173 for touch handling
+    const currentTouch = ev.touches[0];
+    const isMultiTouch = ev.touches.length >= 2;
+    
+    if (isMultiTouch) {
+      const [t1, t2] = [ev.touches[0], ev.touches[1]];
+      const currentMidpoint = midpoint(t1, t2);
+      const currentAngle = angle(t1, t2);
+      const startAngle = draggable.gestureData.startAngle || 0;
+      
+      gestureUpdate = {
+        translation: {
+          x: currentMidpoint.x - draggable.gestureData.startMidpoint.x,
+          y: currentMidpoint.y - draggable.gestureData.startMidpoint.y
+        },
+        scale: 1,
+        rotation: currentAngle - startAngle,
+        pressure: (t1.force + t2.force) / 2 || 0.5,
+        type: 'multi-touch',
+        pivot: currentMidpoint
+      };
+    } else {
+      gestureUpdate = {
+        translation: {
+          x: currentTouch.clientX - draggable.gestureData?.lastKnownPoint?.x || 0,
+          y: currentTouch.clientY - draggable.gestureData?.lastKnownPoint?.y || 0
+        },
+        scale: 1,
+        rotation: 0,
+        pressure: currentTouch.force || 0.5,
+        type: 'single-touch'
+      };
     }
-  }
-}
-document.body.addEventListener("mousemove", function (ev) {
-  ev.touches = [ev];
-
-  if (mousedown) {
-    moveAction(ev, true);
-  }
-});
-
-document.body.addEventListener(
-  "touchmove",
-  function (ev) {
-    ev.preventDefault();
-    moveAction(ev);
-  },
-  { passive: false }
-);
-let canvas = document.createElement("canvas");
-let ctx = canvas.getContext("2d");
-// document.body.appendChild(ctx.canvas); // used for debugging
-
-// this function checks if a pixel location in an image is opaque
-// if it's not, it attemps to find the next image below it until
-// it finds one
-function checkImageCoord(img_element, event) {
-  // non-image elements are always considered opaque
-  if (img_element.tagName !== "IMG") {
-    return img_element;
-  }
-  img_element.crossOrigin = "anonymous";
-  let touches = Array.from(event.touches);
-  let firstTouch = touches[0];
-
-  // Get click coordinates
-  let x = firstTouch.clientX;
-  let y = firstTouch.clientY;
-  let w = (ctx.canvas.width = window.innerWidth);
-  let h = (ctx.canvas.height = window.innerHeight);
-
-  ctx.clearRect(0, 0, w, h);
-
-  let scale = getCurrentScale(img_element);
-  let rotation = getCurrentRotation(img_element);
-
-  let styles = window.getComputedStyle(img_element);
-  ctx.translate(parseFloat(styles.left), parseFloat(styles.top));
-  ctx.scale(scale, scale);
-  ctx.rotate(rotation);
-
-  ctx.drawImage(
-    img_element,
-    -img_element.width / 2,
-    -img_element.height / 2,
-    img_element.width,
-    img_element.height
-  );
-  ctx.resetTransform();
-  let alpha = 1;
-  try {
-    alpha = ctx.getImageData(x, y, 1, 1).data[3]; // [0]R [1]G [2]B [3]A
-    if (!img_element.complete) {
-      alpha = 1;
-    }
-  } catch (e) {
-    console.warn(`add crossorigin="anonymous" to your img`);
-  }
-  // If pixel is transparent, then retrieve the element underneath
-  // and trigger it's click event
-  if (alpha === 0) {
-    img_element.style.pointerEvents = "none";
-    let nextTarget = document.elementFromPoint(
-      firstTouch.clientX,
-      firstTouch.clientY
-    );
-    let nextEl = null;
-    if (nextTarget.classList.contains("draggable")) {
-      nextEl = checkImageCoord(nextTarget, event);
-    }
-    img_element.style.pointerEvents = "auto";
-    return nextEl;
   } else {
-    //image is opaque at location
-    return img_element;
+    // For mouse events, calculate translation from gesture start point
+    const gestureData = draggable.gestureData;
+    if (!gestureData || gestureData.type !== 'single-touch') {
+      console.warn('Invalid gesture data for mouse movement');
+      console.groupEnd();
+      return;
+    }
+
+    gestureUpdate = {
+      translation: {
+        x: ev.clientX - gestureData.startPoint.x,
+        y: ev.clientY - gestureData.startPoint.y
+      },
+      scale: 1,
+      rotation: 0,
+      pressure: ev.pressure || 0.5,
+      type: 'single-touch'
+    };
   }
+
+  console.log('Gesture update:', gestureUpdate);
+
+  // Update the gesture
+  draggable.updateFromGesture(gestureUpdate);
+
+  // Get current transform state for callback
+  const matrix = draggable.getCurrentMatrix();
+  const { translation, scale, rotation } = decomposeMatrix(matrix);
+  console.log('Current transform state:', { translation, scale, rotation });
+
+  // Always update resize handle position for mouse interactions
+  if (isMouse) {
+    console.log('Updating resize handle position');
+    resizeHandle.updatePosition();
+  }
+
+  // Call legacy callback
+  dragMoveCallback(
+    activeElement,
+    translation.x,
+    translation.y,
+    scale,
+    rotation
+  );
+
+  console.groupEnd();
 }
+
+let canvas = document.createElement("canvas");
 
 function getTransform(el) {
   try {
@@ -397,26 +341,9 @@ function getCurrentRotation(el) {
   return Math.atan2(values[1], values[0]);
 }
 
-function add(a, b) {
-  return { x: a.x + b.x, y: a.y + b.y };
-}
-
-function sub(a, b) {
-  return { x: b.x - a.x, y: b.y - a.y };
-}
-
-function scale(a, s) {
-  return { x: a.x * s, y: a.y * s };
-}
-function magnitude(a) {
-  return Math.sqrt(Math.pow(a.x, 2) + Math.pow(a.y, 2));
-}
-function angle(b) {
-  return Math.atan2(b.y, b.x); //radians
-}
-
-function distance(a, b) {
-  return magnitude(sub(a, b));
-}
+// Initialize matrix transform system
+initializeGestureCollection();
+initializeExistingElements();
+observeDraggableElements();
 
 export { setDragStartCallback, setDragMoveCallback, setDragEndCallback };
