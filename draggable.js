@@ -163,7 +163,6 @@ document.addEventListener("mouseup", function(ev) {
   // Reset state
   activeElement = null;
   isMouseDown = false;
-  gestureOriginSet = false;
 });
 
 // Touch events
@@ -193,7 +192,6 @@ document.addEventListener("touchend", function(ev) {
   activeElement = null;
   mousedown = false;
   handle_state = false;
-  gestureOriginSet = false;
   
   // Detach resize handle
   resizeHandle.detach();
